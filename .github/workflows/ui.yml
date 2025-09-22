@@ -1,29 +1,31 @@
-name: CI - UI
+name: UI CI
+
 on:
   push:
-    paths:
-      - '**.ts'
-      - '**.tsx'
-      - '**/package.json'
-      - '**/package-lock.json'
-      - '**/next.config.*'
-      - '.github/workflows/ui.yml'
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run typecheck || true
-      - run: npm run lint || true
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ui-build
-          path: .next
-          retention-days: 7
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint || true   # לא מפיל בילד בשלב זה
+
+      - name: Build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+        run: npm run build
