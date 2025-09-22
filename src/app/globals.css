@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* בסיס */
+html, body { height: 100%; }
+
+/* fallback עדין בנוסף למחלקות ב-layout */
+body {
+  background-color: #f9fafb; /* gray-50 */
+  color: #111827;            /* gray-900 */
+}
+
+/* מיקוד נגיש */
+:where(a, button, input, textarea, select):focus-visible {
+  outline: 2px solid rgb(59 130 246); /* blue-500 */
+  outline-offset: 2px;
+}
+
+/* טבלאות (לצפייה באיוונטים) */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 0.45rem 0.6rem; vertical-align: top; }
+thead th { border-bottom: 1px solid #e5e7eb; }
+tbody tr + tr td { border-top: 1px solid #f3f4f6; }
+pre { white-space: pre-wrap; word-break: break-word; }
+
+/* תגיות קטנות */
+.tag {
+  display: inline-block;
+  padding: .125rem .4rem;
+  font-size: .75rem;
+  border-radius: .25rem;
+  background: #eef2ff; /* indigo-50 */
+  color: #3730a3;      /* indigo-800 */
+}

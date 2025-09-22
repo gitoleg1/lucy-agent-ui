@@ -1,0 +1,10 @@
+.viewer { display: flex; flex-direction: column; gap: 12px; }
+.header { display: flex; justify-content: space-between; align-items: center; }
+.stopBtn { background: #e11d48; color: #fff; border: none; border-radius: 9999px; padding: 8px 16px; font-weight: 700; cursor: pointer; }
+.stopBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.log { max-height: 60vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; background: #fff; }
+.row { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #eee; }
+.row:last-child { border-bottom: none; }
+.time { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; opacity: 0.7; min-width: 220px; }
+.type { min-width: 140px; direction: ltr; font-weight: 600; }
+.data { margin: 0; white-space: pre-wrap; word-break: break-word; }
