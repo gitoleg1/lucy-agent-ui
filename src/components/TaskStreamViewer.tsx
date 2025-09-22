@@ -1,186 +1,152 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import styles from "./TaskStreamViewer.module.css";
 
-/**
- * TaskStreamViewer
- * - מושך את כתובת ה-API מה-UI (/api/ping)
- * - מאפשר להתחבר ל-WebSocket ולהציג הודעות/אירועים זורמים
- * - שומר על ניקיון התלויות כך שלא תופיע אזהרת react-hooks/exhaustive-deps
- */
+type Props = {
+  /** כתובת בסיס ל-API, אופציונלי. אם לא יימסר נשתמש ב-env או בברירת מחדל מקומית */
+  apiBaseDefault?: string;
+  /** מזהה משימה לפתיחה ראשונית (אופציונלי) */
+  taskIdDefault?: string;
+};
 
-type WsMessage =
-  | { type: "info"; message: string }
-  | { type: "event"; message: string }
-  | { type: "error"; message: string };
+type StreamEvent =
+  | { type: "open" }
+  | { type: "message"; data: any }
+  | { type: "error"; error: string }
+  | { type: "close"; code?: number; reason?: string };
 
-export default function TaskStreamViewer() {
-  const [apiBase, setApiBase] = useState<string>("");
-  const [connecting, setConnecting] = useState(false);
+function resolveApiBase(explicit?: string) {
+  if (explicit && explicit.trim()) return explicit.trim();
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGENT_BASE)
+    return process.env.NEXT_PUBLIC_AGENT_BASE!;
+  return "http://127.0.0.1:8000";
+}
+
+export default function TaskStreamViewer({
+  apiBaseDefault,
+  taskIdDefault,
+}: Props) {
+  const [apiBase, setApiBase] = useState<string>(() => resolveApiBase(apiBaseDefault));
+  const [taskId, setTaskId] = useState<string>(() => taskIdDefault ?? "");
+  const [events, setEvents] = useState<StreamEvent[]>([]);
   const [connected, setConnected] = useState(false);
-  const [messages, setMessages] = useState<WsMessage[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
-  // נקראת פעם אחת: מביאה את בסיס ה-API מתוך /api/ping של ה-UI
-  useEffect(() => {
-    let aborted = false;
-
-    async function loadPing() {
-      try {
-        const res = await fetch("/api/ping", { cache: "no-store" });
-        if (!res.ok) throw new Error(`ping failed with ${res.status}`);
-        const data = await res.json();
-        // אם קיים שדה base נשתמש בו, אחרת נשאיר ריק
-        if (!aborted && typeof data?.base === "string") {
-          setApiBase(data.base);
-        }
-      } catch (err) {
-        console.error(err);
-        if (!aborted) {
-          // לא עוצרים את הדף, רק נציג הודעת מידע
-          setMessages((prev) => [
-            ...prev,
-            { type: "error", message: "Failed to read /api/ping. Using default." },
-          ]);
-        }
-      }
-    }
-
-    loadPing();
-    return () => {
-      aborted = true;
-    };
-  }, []);
-
-  // גוזרים את כתובת ה-WS מה-apiBase. אם חסר, ננסה "ws(s)://host"
-  const wsUrl = useMemo(() => {
-    // אם ping החזיר http://127.0.0.1:8000 למשל – נהפוך ל-ws://127.0.0.1:8000/ws
-    if (apiBase.startsWith("http://")) return apiBase.replace("http://", "ws://") + "/ws";
-    if (apiBase.startsWith("https://")) return apiBase.replace("https://", "wss://") + "/ws";
-
-    // fallback: אותו host של ה-UI (עבור dev ריץ' פרוקסי)
-    if (typeof window !== "undefined") {
-      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.host;
-      return `${proto}//${host}/ws`;
-    }
-    return "ws://localhost:8000/ws";
-  }, [apiBase]);
-
-  // פונקציית התחברות — עוטפים ב-useCallback ומחזיקים את כל התלויות
-  const connect = useCallback(() => {
-    if (connected || connecting) return;
-    setConnecting(true);
-
-    try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setConnecting(false);
-        setConnected(true);
-        setMessages((prev) => [...prev, { type: "info", message: "WebSocket connected" }]);
-      };
-
-      ws.onmessage = (ev) => {
-        try {
-          const parsed = JSON.parse(ev.data);
-          if (typeof parsed?.message === "string") {
-            setMessages((prev) => [...prev, { type: "event", message: parsed.message }]);
-          } else {
-            setMessages((prev) => [...prev, { type: "event", message: ev.data }]);
-          }
-        } catch {
-          setMessages((prev) => [...prev, { type: "event", message: String(ev.data) }]);
-        }
-      };
-
-      ws.onerror = () => {
-        setMessages((prev) => [...prev, { type: "error", message: "WebSocket error" }]);
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        setMessages((prev) => [...prev, { type: "info", message: "WebSocket closed" }]);
-      };
-    } catch (err) {
-      console.error(err);
-      setConnecting(false);
-      setMessages((prev) => [...prev, { type: "error", message: "Failed to open WebSocket" }]);
-    }
-  }, [wsUrl, connected, connecting]);
+  const streamUrl = useMemo(() => {
+    if (!taskId) return "";
+    const base = apiBase.replace(/\/+$/, "");
+    return `${base}/tasks/${encodeURIComponent(taskId)}/stream`;
+  }, [apiBase, taskId]);
 
   const disconnect = useCallback(() => {
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-      wsRef.current.close();
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
     }
-    wsRef.current = null;
     setConnected(false);
+    setEvents((prev) => [...prev, { type: "close" }]);
   }, []);
 
-  // ניקוי משאבים כשהקומפוננטה מתפרקת
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) {
-        try {
-          wsRef.current.close();
-        } catch {
-          // ignore
-        }
+  const connect = useCallback(() => {
+    if (!streamUrl) return;
+
+    // נקה חיבור קודם אם יש
+    if (esRef.current) esRef.current.close();
+
+    const es = new EventSource(streamUrl);
+    esRef.current = es;
+    setConnected(true);
+    setEvents([{ type: "open" }]);
+
+    es.onmessage = (e) => {
+      try {
+        const data = e.data ? JSON.parse(e.data) : null;
+        setEvents((prev) => [...prev, { type: "message", data }]);
+      } catch {
+        setEvents((prev) => [...prev, { type: "message", data: e.data }]);
       }
     };
-  }, []);
 
-  const sendPing = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setMessages((prev) => [...prev, { type: "error", message: "Not connected" }]);
-      return;
-    }
-    const payload = JSON.stringify({ type: "ping", t: Date.now() });
-    wsRef.current.send(payload);
-    setMessages((prev) => [...prev, { type: "info", message: "→ sent ping" }]);
+    es.onerror = () => {
+      setEvents((prev) => [...prev, { type: "error", error: "Stream error" }]);
+      // EventSource במצב שגיאה—נסגור כדי לא להיתקע
+      es.close();
+      setConnected(false);
+    };
+  }, [streamUrl]);
+
+  // נתק כשעוזבים את הדף
+  useEffect(() => {
+    return () => {
+      if (esRef.current) esRef.current.close();
+    };
   }, []);
 
   return (
-    <div className={styles.viewer}>
-      <header className={styles.header}>
-        <h2>Task Stream Viewer</h2>
-        <div className={styles.meta}>
-          <div>API Base: <code>{apiBase || "(unknown – try /api/ping)"}</code></div>
-          <div>WS URL: <code>{wsUrl}</code></div>
-          <div>Status: <strong>{connected ? "Connected" : connecting ? "Connecting..." : "Disconnected"}</strong></div>
-        </div>
-        <div className={styles.actions}>
-          <button onClick={connect} disabled={connected || connecting}>
-            {connecting ? "Connecting..." : connected ? "Connected" : "Connect"}
-          </button>
-          <button onClick={disconnect} disabled={!connected}>Disconnect</button>
-          <button onClick={sendPing} disabled={!connected}>Send Ping</button>
-          <button
-            onClick={() => setMessages([])}
-            disabled={messages.length === 0}
-            title="Clear console"
-          >
-            Clear
-          </button>
-        </div>
-      </header>
+    <div className="max-w-3xl mx-auto space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <label className="md:col-span-2 block">
+          <div className="text-sm text-gray-500 mb-1">API Base</div>
+          <input
+            className="w-full rounded-2xl border p-2"
+            value={apiBase}
+            onChange={(e) => setApiBase(e.target.value)}
+            placeholder="http://127.0.0.1:8000"
+          />
+        </label>
 
-      <section className={styles.console} aria-label="stream console">
-        {messages.length === 0 ? (
-          <div className={styles.empty}>No messages yet. Connect and send ping to see events.</div>
+        <label className="block">
+          <div className="text-sm text-gray-500 mb-1">Task ID</div>
+          <input
+            className="w-full rounded-2xl border p-2"
+            value={taskId}
+            onChange={(e) => setTaskId(e.target.value)}
+            placeholder="e.g. abc123"
+          />
+        </label>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          className="rounded-2xl px-4 py-2 border shadow disabled:opacity-50"
+          onClick={connect}
+          disabled={!taskId || connected}
+        >
+          Connect
+        </button>
+        <button
+          className="rounded-2xl px-4 py-2 border shadow disabled:opacity-50"
+          onClick={disconnect}
+          disabled={!connected}
+        >
+          Disconnect
+        </button>
+      </div>
+
+      <div className="rounded-2xl border p-3 max-h-96 overflow-auto">
+        {events.length === 0 ? (
+          <div className="text-gray-500">No events yet.</div>
         ) : (
-          <ul className={styles.list}>
-            {messages.map((m, i) => (
-              <li key={i} className={m.type === "error" ? styles.error : m.type === "info" ? styles.info : styles.event}>
-                <span className={styles.badge}>{m.type}</span>
-                <pre className={styles.pre}>{m.message}</pre>
-              </li>
-            ))}
+          <ul className="space-y-2 text-sm">
+            {events.map((ev, i) => {
+              if (ev.type === "open") return <li key={i}>🟢 stream opened</li>;
+              if (ev.type === "close")
+                return <li key={i}>⚪ stream closed</li>;
+              if (ev.type === "error")
+                return <li key={i}>🔴 error: {ev.error}</li>;
+              return (
+                <li key={i}>
+                  <pre className="whitespace-pre-wrap break-words">
+                    {typeof ev.data === "string"
+                      ? ev.data
+                      : JSON.stringify(ev.data, null, 2)}
+                  </pre>
+                </li>
+              );
+            })}
           </ul>
         )}
-      </section>
+      </div>
     </div>
   );
 }
