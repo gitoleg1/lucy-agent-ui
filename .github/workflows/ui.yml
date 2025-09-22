@@ -3,29 +3,50 @@ name: UI CI
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "src/**"
+      - "app/**"
+      - ".github/workflows/ui.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - "next.config.ts"
+      - "tailwind.config.ts"
+      - "postcss.config.*"
   pull_request:
     branches: [ "main" ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js 22
+      - name: Use Node 22
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
 
-      - name: Install deps
+      - name: Install deps (npm ci)
         run: npm ci
 
-      - name: Lint
-        run: npm run lint || true   # לא מפיל בילד בשלב זה
+      - name: Lint (optional)
+        run: npm run lint || true
 
       - name: Build
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
         run: npm run build
+
+      - name: Upload build artifacts (optional)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-build
+          path: .next
+          if-no-files-found: ignore
