@@ -11,7 +11,7 @@ type Props = {
 
 type StreamEvent =
   | { type: "open" }
-  | { type: "message"; data: any }
+  | { type: "message"; data: unknown }
   | { type: "error"; error: string }
   | { type: "close"; code?: number; reason?: string };
 
@@ -20,6 +20,15 @@ function resolveApiBase(explicit?: string) {
   if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGENT_BASE)
     return process.env.NEXT_PUBLIC_AGENT_BASE!;
   return "http://127.0.0.1:8000";
+}
+
+function pretty(v: unknown): string {
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
 }
 
 export default function TaskStreamViewer({
@@ -50,7 +59,6 @@ export default function TaskStreamViewer({
   const connect = useCallback(() => {
     if (!streamUrl) return;
 
-    // נקה חיבור קודם אם יש
     if (esRef.current) esRef.current.close();
 
     const es = new EventSource(streamUrl);
@@ -58,24 +66,24 @@ export default function TaskStreamViewer({
     setConnected(true);
     setEvents([{ type: "open" }]);
 
-    es.onmessage = (e) => {
+    es.onmessage = (e: MessageEvent<string>) => {
+      let payload: unknown = e.data;
       try {
-        const data = e.data ? JSON.parse(e.data) : null;
-        setEvents((prev) => [...prev, { type: "message", data }]);
+        payload = e.data ? JSON.parse(e.data) : null;
       } catch {
-        setEvents((prev) => [...prev, { type: "message", data: e.data }]);
+        // אם זה לא JSON — נשאיר מחרוזת
+        payload = e.data;
       }
+      setEvents((prev) => [...prev, { type: "message", data: payload }]);
     };
 
     es.onerror = () => {
       setEvents((prev) => [...prev, { type: "error", error: "Stream error" }]);
-      // EventSource במצב שגיאה—נסגור כדי לא להיתקע
       es.close();
       setConnected(false);
     };
   }, [streamUrl]);
 
-  // נתק כשעוזבים את הדף
   useEffect(() => {
     return () => {
       if (esRef.current) esRef.current.close();
@@ -130,16 +138,12 @@ export default function TaskStreamViewer({
           <ul className="space-y-2 text-sm">
             {events.map((ev, i) => {
               if (ev.type === "open") return <li key={i}>🟢 stream opened</li>;
-              if (ev.type === "close")
-                return <li key={i}>⚪ stream closed</li>;
-              if (ev.type === "error")
-                return <li key={i}>🔴 error: {ev.error}</li>;
+              if (ev.type === "close") return <li key={i}>⚪ stream closed</li>;
+              if (ev.type === "error") return <li key={i}>🔴 error: {ev.error}</li>;
               return (
                 <li key={i}>
                   <pre className="whitespace-pre-wrap break-words">
-                    {typeof ev.data === "string"
-                      ? ev.data
-                      : JSON.stringify(ev.data, null, 2)}
+                    {pretty(ev.data)}
                   </pre>
                 </li>
               );
